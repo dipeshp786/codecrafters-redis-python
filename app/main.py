@@ -9,8 +9,7 @@ def main():
     # Accept one client connection
     connection, _ = server_socket.accept()
 
-    # Receive data (but we don’t use it yet for PING)
-    connection.recv(1024)
+  
 
     # Send a valid Redis PONG response
     connection.sendall(b"+PONG\r\n")
