@@ -21,7 +21,13 @@ def handle_client_connection(client_socket):
     client_socket.close()
 
 
-from app import DatabaseHandler, ExpirationManager
+def handle_command(
+    args: list, database: DatabaseHandler, expirations_manager: ExpirationManager
+) -> str:
+    if len(args) != 1 or len(args[0]) == 0:
+        return "-ERR wrong number of arguments for command\r\n"
+    return f"${len(args[0])}\r\n{args[0]}\r\n"
+
 
 COMMAND_NAME = "ECHO"
 
