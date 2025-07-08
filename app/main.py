@@ -6,7 +6,6 @@ def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
     server_socket.accept()  # wait for client
     connection, _ = server_socket.accept()
-    with connection:
     connection.receive(1024)
     connection.sendall(pong.encode)
     PONG = "+pong\r\n"
