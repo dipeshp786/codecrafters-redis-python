@@ -1,37 +1,37 @@
 import socket
-
 import threading
 
 BUF_SIZE = 4096
 
+def handle_client_connection(client_socket):
+    while True:
+        try:
+            chunk = client_socket.recv(BUF_SIZE)
+            if not chunk:
+                break  # client disconnected
+            # Decode client data
+            data = chunk.decode()
 
-def handle_command(client: socket.socket):
-    while chunk := client.recv(BUF_SIZE):
-        if chunk == b"":
-            break
-        # print(f"[CHUNK] ```\n{chunk.decode()}\n```")
-        client.sendall(b"+PONG\r\n")
-        
+            # Check for "PING" command (case-insensitive)
+            if "ping" in data.lower():
+                client_socket.sendall(b"+PONG\r\n")
+        except ConnectionResetError:
+            break  # Handle client forcibly closing the connection
+
+    client_socket.close()
+
 
 def main():
     print("Logs from your program will appear here!")
 
-    # Create the server socket
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
 
-    # Accept a single client connection
-    connection, _ = server_socket.accept()
-
-    # Keep responding to multiple PING requests
+    # Accept and handle multiple clients using threads
     while True:
-        request = connection.recv(1024)
-        if not request:
-            break  # client disconnected
+        client_socket, _ = server_socket.accept()
+        thread = threading.Thread(target=handle_client_connection, args=(client_socket,))
+        thread.start()
 
-        data = request.decode()
-
-        if "ping" in data.lower():
-            connection.sendall(b"+PONG\r\n")
 
 if __name__ == "__main__":
     main()
