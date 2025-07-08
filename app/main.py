@@ -40,6 +40,8 @@ def handle_client_connection(client_socket):
             elif command == "ECHO" and len(args) == 2:
                 response = f"${len(args[1])}\r\n{args[1]}\r\n"
                 client_socket.sendall(response.encode())
-            elif command == "SET" and len(args) == 3:
-                key, value = args[1], args[2]
-                database[key] =
+         elif command == "SET" and len(args) == 3:
+    key, value = args[1], args[2]
+    database[key] = value
+    client_socket.sendall(b"+OK\r\n")
+
