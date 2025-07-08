@@ -1,5 +1,18 @@
 import socket
 
+import threading
+
+BUF_SIZE = 4096
+
+
+def handle_command(client: socket.socket):
+    while chunk := client.recv(BUF_SIZE):
+        if chunk == b"":
+            break
+        # print(f"[CHUNK] ```\n{chunk.decode()}\n```")
+        client.sendall(b"+PONG\r\n")
+        
+
 def main():
     print("Logs from your program will appear here!")
 
