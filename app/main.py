@@ -1,24 +1,31 @@
 import socket
 import threading
+import time
 
 BUF_SIZE = 4096
-database = {}  # In-memory key-value store
+database = {}
+expiry_times = {}  # key: expiration_timestamp
 
 
 def parse_resp_command(data: bytes) -> list[str]:
-    """Parses a RESP Array and returns a list of strings (e.g., ['SET', 'mykey', 'hello'])"""
+    """Parses RESP input and returns a list of arguments (e.g., ['SET', 'mykey', 'myval', 'PX', '100'])"""
     lines = data.decode().split("\r\n")
     if not lines or not lines[0].startswith("*"):
         return []
-
     args = []
-    i = 2  # Start after the first bulk string length
+    i = 2
     while i < len(lines):
         if lines[i] == "":
             break
         args.append(lines[i])
-        i += 2  # Skip the length line and move to next argument
+        i += 2
     return args
+
+
+def handle_expiration(key: str, ttl_ms: int):
+    time.sleep(ttl_ms / 1000)
+    database.pop(key, None)
+    expiry_times.pop(key, None)
 
 
 def handle_client_connection(client_socket):
@@ -26,7 +33,7 @@ def handle_client_connection(client_socket):
         try:
             chunk = client_socket.recv(BUF_SIZE)
             if not chunk:
-                break  # client disconnected
+                break
 
             args = parse_resp_command(chunk)
 
@@ -42,36 +49,24 @@ def handle_client_connection(client_socket):
                 response = f"${len(args[1])}\r\n{args[1]}\r\n"
                 client_socket.sendall(response.encode())
 
-            elif command == "SET" and len(args) == 3:
-                key, value = args[1], args[2]
-                database[key] = value
-                client_socket.sendall(b"+OK\r\n")
+            elif command == "SET":
+                if len(args) >= 3:
+                    key, value = args[1], args[2]
+                    database[key] = value
+                    response = "+OK\r\n"
 
-            elif command == "GET" and len(args) == 2:
+                    # Check for optional PX expiration
+                    if len(args) >= 5 and args[3].lower() == "px":
+                        try:
+                            ttl_ms = int(args[4])
+                            expiry_times[key] = time.time() + ttl_ms / 1000
+                            threading.Thread(target=handle_expiration, args=(key, ttl_ms)).start()
+                        except ValueError:
+                            response = "-ERR invalid PX value\r\n"
+
+                    client_socket.sendall(response.encode())
+
+            elif command == "GET" and len(args) >= 2:
                 key = args[1]
-                value = database.get(key)
-                if value is not None:
-                    response = f"${len(value)}\r\n{value}\r\n"
-                else:
-                    response = "$-1\r\n"  # RESP nil
-                client_socket.sendall(response.encode())
-
-        except ConnectionResetError:
-            break  # client forcibly disconnected
-
-    client_socket.close()
-
-
-def main():
-    print("Logs from your program will appear here!")
-
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-
-    while True:
-        client_socket, _ = server_socket.accept()
-        thread = threading.Thread(target=handle_client_connection, args=(client_socket,))
-        thread.start()
-
-
-if __name__ == "__main__":
-    main()
+                # Check if key has expired
+                if key in expiry_times and time.time() > expiry_times[key]:
