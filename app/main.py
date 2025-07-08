@@ -4,11 +4,9 @@ import time
 
 BUF_SIZE = 4096
 database = {}
-expiry_times = {}  # key: expiration_timestamp
-
+expiry_times = {}
 
 def parse_resp_command(data: bytes) -> list[str]:
-    """Parses RESP input and returns a list of arguments (e.g., ['SET', 'mykey', 'myval', 'PX', '100'])"""
     lines = data.decode().split("\r\n")
     if not lines or not lines[0].startswith("*"):
         return []
@@ -21,22 +19,14 @@ def parse_resp_command(data: bytes) -> list[str]:
         i += 2
     return args
 
-
-def handle_expiration(key: str, ttl_ms: int):
-    time.sleep(ttl_ms / 1000)
-    database.pop(key, None)
-    expiry_times.pop(key, None)
-
-
 def handle_client_connection(client_socket):
     while True:
         try:
-            chunk = client_socket.recv(BUF_SIZE)
-            if not chunk:
+            data = client_socket.recv(BUF_SIZE)
+            if not data:
                 break
 
-            args = parse_resp_command(chunk)
-
+            args = parse_resp_command(data)
             if not args:
                 continue
 
@@ -50,23 +40,51 @@ def handle_client_connection(client_socket):
                 client_socket.sendall(response.encode())
 
             elif command == "SET":
-                if len(args) >= 3:
-                    key, value = args[1], args[2]
-                    database[key] = value
-                    response = "+OK\r\n"
-
-                    # Check for optional PX expiration
-                    if len(args) >= 5 and args[3].lower() == "px":
-                        try:
-                            ttl_ms = int(args[4])
-                            expiry_times[key] = time.time() + ttl_ms / 1000
-                            threading.Thread(target=handle_expiration, args=(key, ttl_ms)).start()
-                        except ValueError:
-                            response = "-ERR invalid PX value\r\n"
-
-                    client_socket.sendall(response.encode())
-
-            elif command == "GET" and len(args) >= 2:
                 key = args[1]
-                # Check if key has expired
+                value = args[2]
+                database[key] = value
+
+                # Check for PX (expiry in milliseconds)
+                if len(args) >= 5 and args[3].upper() == "PX":
+                    try:
+                        expiry_ms = int(args[4])
+                        expiry_time = time.time() + expiry_ms / 1000
+                        expiry_times[key] = expiry_time
+                    except ValueError:
+                        client_socket.sendall(b"-ERR invalid PX value\r\n")
+                        continue
+
+                client_socket.sendall(b"+OK\r\n")
+
+            elif command == "GET":
+                key = args[1]
                 if key in expiry_times and time.time() > expiry_times[key]:
+                    # Expired key: remove it
+                    database.pop(key, None)
+                    expiry_times.pop(key, None)
+                    client_socket.sendall(b"$-1\r\n")
+                elif key in database:
+                    value = database[key]
+                    response = f"${len(value)}\r\n{value}\r\n"
+                    client_socket.sendall(response.encode())
+                else:
+                    client_socket.sendall(b"$-1\r\n")
+
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+
+    client_socket.close()
+
+def main():
+    print("Logs from your program will appear here!")
+
+    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+
+    while True:
+        client_socket, _ = server_socket.accept()
+        thread = threading.Thread(target=handle_client_connection, args=(client_socket,))
+        thread.start()
+
+if __name__ == "__main__":
+    main()
