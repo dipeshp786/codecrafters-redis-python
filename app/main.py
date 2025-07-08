@@ -15,6 +15,13 @@ def main():
     # Send a valid Redis PONG response
     connection.sendall(b"+PONG\r\n")
 
+while True:
+        request: bytes = client_socket.recv(512)
+        data: str = request.decode()
+
+        # print(data)
+        if "ping" in data.lower():
+            client_socket.send("+PONG\r\n".encode())
 
 if __name__ == "__main__":
     main()
