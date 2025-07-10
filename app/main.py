@@ -94,16 +94,12 @@ def main():
     print(f"[your_program] Full path: {rdb_path}")
     print(f"[your_program] Loaded keys from RDB: {list(data_store.keys())}")
 
-import socket
-
     server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     server.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # Allow both IPv6 and IPv4
     server.bind(('::', 6379))
     server.listen(5)
 
-print("Listening on all IPv6 and IPv4 addresses, port 6379")
-
-    print("[your_program] Listening on localhost:6379")
+    print("[your_program] Listening on all IPv6 and IPv4 addresses, port 6379")
 
     try:
         while True:
