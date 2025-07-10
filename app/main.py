@@ -16,15 +16,16 @@ def load_rdb(filepath):
     with open(filepath, "rb") as f:
         data = f.read()
 
+    # Extract candidate keys: lowercase ASCII letters length 5-20
     candidate_keys = re.findall(b'[a-z]{5,20}', data)
     skip_keys = {"redis", "ver", "bits", "rdb", "expiry", "aux"}
 
     database.clear()
     for key in candidate_keys:
         key_str = key.decode('ascii', errors='ignore')
-        if key_str in skip_keys:
+        if not key_str or key_str in skip_keys:
             continue
-        database[key_str] = "value"  # dummy value for keys
+        database[key_str] = "value"  # dummy placeholder value
 
     print(f"[your_program] Loaded keys from RDB: {list(database.keys())}")
 
@@ -36,13 +37,15 @@ def handle_client(client_socket):
             return
 
         cmd = data.decode('utf-8').strip()
-        if "KEYS" in cmd:
+        # Only support simple KEYS command
+        if cmd.upper().startswith("KEYS"):
             keys = list(database.keys())
             response = f"*{len(keys)}\r\n"
             for k in keys:
                 response += f"${len(k)}\r\n{k}\r\n"
             client_socket.sendall(response.encode('utf-8'))
         else:
+            # Respond with empty array for other commands
             client_socket.sendall(b"*0\r\n")
     except Exception as e:
         print(f"[your_program] Error handling client: {e}")
@@ -68,13 +71,17 @@ def run_server(host="localhost", port=6379):
     server.listen(5)
     print(f"[your_program] Listening on {host}:{port}")
 
-    # Setup graceful shutdown on Ctrl+C
+    # Setup graceful shutdown on Ctrl+C or termination
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     try:
         while True:
-            client_socket, addr = server.accept()
+            try:
+                client_socket, addr = server.accept()
+            except OSError:
+                # Socket closed during shutdown
+                break
             client_thread = threading.Thread(target=handle_client, args=(client_socket,))
             client_thread.daemon = True
             client_thread.start()
@@ -85,7 +92,7 @@ def run_server(host="localhost", port=6379):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Simple Redis-like server reading keys from RDB file")
     parser.add_argument("--dir", required=True, help="RDB directory")
     parser.add_argument("--dbfilename", required=True, help="RDB filename")
     args = parser.parse_args()
