@@ -2,11 +2,12 @@ import socket
 import threading
 import time
 import argparse
+import os
 
 BUF_SIZE = 4096
 database = {}
 expiry_times = {}
-dir_value = "."  # Will be overwritten from CLI argument if provided
+dir_value = "."  # will be set by --dir arg
 
 def parse_resp_command(data: bytes) -> list[str]:
     lines = data.decode().split("\r\n")
@@ -20,6 +21,39 @@ def parse_resp_command(data: bytes) -> list[str]:
         args.append(lines[i])
         i += 2
     return args
+
+def read_rdb_file(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            data = f.read()
+            if data[:5] != b"REDIS":
+                print("Invalid RDB header.")
+                return
+
+            # Skip header (first few metadata bytes)
+            i = data.find(b"\xfe")  # first DB selector
+            if i == -1:
+                return
+
+            i += 1
+            while i < len(data):
+                if data[i] == 0xFB:  # type 0xFB = String key-value pair
+                    i += 1
+                    keylen = data[i]
+                    i += 1
+                    key = data[i:i + keylen].decode()
+                    i += keylen
+                    vallen = data[i]
+                    i += 1
+                    value = data[i:i + vallen].decode()
+                    i += vallen
+                    database[key] = value
+                elif data[i] == 0xFF:
+                    break
+                else:
+                    i += 1
+    except Exception as e:
+        print(f"Failed to read RDB: {e}")
 
 def handle_client_connection(client_socket):
     while True:
@@ -74,6 +108,13 @@ def handle_client_connection(client_socket):
                 response = f"*2\r\n$3\r\ndir\r\n${len(dir_value)}\r\n{dir_value}\r\n"
                 client_socket.sendall(response.encode())
 
+            elif command == "KEYS" and len(args) == 2 and args[1] == "*":
+                keys = [key for key in database.keys()]
+                resp = f"*{len(keys)}\r\n"
+                for key in keys:
+                    resp += f"${len(key)}\r\n{key}\r\n"
+                client_socket.sendall(resp.encode())
+
         except Exception as e:
             print(f"Error: {e}")
             break
@@ -89,10 +130,18 @@ def main():
     args = parser.parse_args()
 
     dir_value = args.dir
+    rdb_path = os.path.join(args.dir, args.dbfilename)
 
     print("Logs from your program will appear here!")
     print(f"RDB directory: {args.dir}")
     print(f"RDB filename: {args.dbfilename}")
+    print(f"Full path: {rdb_path}")
+
+    if os.path.exists(rdb_path):
+        print("Loading RDB...")
+        read_rdb_file(rdb_path)
+    else:
+        print("RDB file not found, starting fresh.")
 
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
 
@@ -103,44 +152,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-    import argparse
-import asyncio
-import time
-import utils.parser as resp
-
-
-async def serveRedis():
-    config = getConfig()
-    server = await asyncio.start_server(
-        lambda r, w: handleClient(config, r, w), config["host"], config["port"]
-    )
-    print(f"Starting server on {config['host']}:{config['port']}")
-    async with server:
-        await server.serve_forever()
-
-
-def getConfig():
-    flag = argparse.ArgumentParser()
-    flag.add_argument("--dir", default=".", help="Directory for redis files")
-    flag.add_argument("--dbfilename", default="dump.rdb", help="Database filename")
-    flag.add_argument("--port", default="6379", help="Port to listen on")
-    flag.add_argument("--replicaof", help="Replication target (format: HOST PORT)")
-    args = flag.parse_args()
-    config = {
-        "store": {},
-        "port": args.port,
-        "host": "0.0.0.0",
-        "role": "master",
-        "dbfilename": args.dbfilename,
-        "dir": args.dir,
-        "master_replid": "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
-        "master_repl_offset": "0",
-        "replicaof": args.replicaof,
-        "master_host": None,
-        "master_port": None,
-    }
-    resp.read_key_val_from_db(config["dir"], config["dbfilename"], config["store"])
-    if args.replicaof:
-        config["role"] = "slave"
-        config["master_host"], config["master_port"] = args.replicaof
