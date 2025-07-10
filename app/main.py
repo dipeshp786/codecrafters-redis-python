@@ -96,7 +96,11 @@ def main():
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    server.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
     server.bind(('::', 6379))
+    server.listen(5)
+
     server.listen(5)
     print("[your_program] Listening on localhost:6379")
 
