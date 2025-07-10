@@ -3,14 +3,15 @@ import threading
 import time
 import argparse
 import os
+import struct
 
 BUF_SIZE = 4096
 database = {}
 expiry_times = {}
-dir_value = "."  # will be set by --dir arg
+dir_value = "."
 
 def parse_resp_command(data: bytes) -> list[str]:
-    lines = data.decode().split("\r\n")
+    lines = data.decode(errors="ignore").split("\r\n")
     if not lines or not lines[0].startswith("*"):
         return []
     args = []
@@ -26,29 +27,33 @@ def read_rdb_file(filepath):
     try:
         with open(filepath, "rb") as f:
             data = f.read()
+
             if data[:5] != b"REDIS":
-                print("Invalid RDB header.")
+                print("Invalid header.")
                 return
 
-            # Skip header (first few metadata bytes)
-            i = data.find(b"\xfe")  # first DB selector
+            i = data.find(b"\xfe")  # Skip to DB selector
             if i == -1:
                 return
 
-            i += 1
+            i += 2  # skip DB selector and zero byte
+
             while i < len(data):
-                if data[i] == 0xFB:  # type 0xFB = String key-value pair
+                opcode = data[i]
+                if opcode == 0xFB:
                     i += 1
-                    keylen = data[i]
+                    key_len = data[i]
                     i += 1
-                    key = data[i:i + keylen].decode()
-                    i += keylen
-                    vallen = data[i]
+                    key = data[i:i + key_len].decode("utf-8", errors="ignore")
+                    i += key_len
+
+                    val_len = data[i]
                     i += 1
-                    value = data[i:i + vallen].decode()
-                    i += vallen
-                    database[key] = value
-                elif data[i] == 0xFF:
+                    val = data[i:i + val_len].decode("utf-8", errors="ignore")
+                    i += val_len
+
+                    database[key] = val
+                elif opcode == 0xFF:
                     break
                 else:
                     i += 1
@@ -126,29 +131,3 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", type=str, default=".")
-    parser.add_argument("--dbfilename", type=str, default="dump.rdb")
-    args = parser.parse_args()
-
-    dir_value = args.dir
-    rdb_path = os.path.join(args.dir, args.dbfilename)
-
-    print("Logs from your program will appear here!")
-    print(f"RDB directory: {args.dir}")
-    print(f"RDB filename: {args.dbfilename}")
-    print(f"Full path: {rdb_path}")
-
-    if os.path.exists(rdb_path):
-        print("Loading RDB...")
-        read_rdb_file(rdb_path)
-    else:
-        print("RDB file not found, starting fresh.")
-
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-
-    while True:
-        client_socket, _ = server_socket.accept()
-        thread = threading.Thread(target=handle_client_connection, args=(client_socket,))
-        thread.start()
-
-if __name__ == "__main__":
-    main()
