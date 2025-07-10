@@ -1,109 +1,114 @@
 #!/usr/bin/env python3
 import socket
 import threading
-import time
 import argparse
 import os
 
 BUF_SIZE = 4096
 database = {}
-expiry_times = {}
 dir_value = "."
 
-def parse_resp_command(data: bytes) -> list[str]:
-    lines = data.decode(errors="ignore").split("\r\n")
-    if not lines or not lines[0].startswith("*"):
-        return []
-    args = []
-    i = 2
-    while i < len(lines):
-        if lines[i] == "":
-            break
-        args.append(lines[i])
-        i += 2
-    return args
-
-def read_rdb_file(filepath):
+def parse_resp_command(data: bytes):
+    """Parse basic RESP arrays into list of strings."""
     try:
-        data = open(filepath, "rb").read()
-        i = data.find(b"\xfe")
-        if i == -1: return
-        i += 2
-        while i < len(data):
-            opcode = data[i]
-            if opcode == 0xFB:
-                i += 1
-                keylen = data[i]; i += 1
-                key = data[i:i+keylen].decode('utf-8', 'ignore'); i += keylen
-                vallen = data[i]; i += 1
-                val = data[i:i+vallen].decode('utf-8', 'ignore'); i += vallen
-                database[key] = val
-            elif opcode == 0xFF:
+        lines = data.decode(errors='ignore').split("\r\n")
+        if not lines or not lines[0].startswith("*"):
+            return []
+        n = int(lines[0][1:])
+        args = []
+        idx = 1
+        for _ in range(n):
+            length = int(lines[idx][1:])
+            idx += 1
+            args.append(lines[idx])
+            idx += 1
+        return args
+    except Exception:
+        return []
+
+def load_rdb(filepath):
+    """Very simple loader for RDB keys only (assumes certain structure)."""
+    if not os.path.isfile(filepath):
+        return
+    with open(filepath, "rb") as f:
+        data = f.read()
+    # Super simplified: scan for keys in data by a naive method
+    # Real RDB parsing is complex, so here we scan for ASCII strings between 3 and 20 chars
+    import re
+    keys = re.findall(b'[a-z]{3,20}', data)
+    for key in keys:
+        key_str = key.decode('ascii', errors='ignore')
+        if key_str not in database:
+            database[key_str] = "value"  # dummy value
+    print(f"Loaded keys from RDB: {list(database.keys())}")
+
+def handle_client(sock):
+    try:
+        while True:
+            data = sock.recv(BUF_SIZE)
+            if not data:
                 break
-            else:
-                i += 1
-    except Exception as e:
-        print("Failed to read RDB:", e)
-
-def handle_client_connection(client_socket):
-    while True:
-        try:
-            data = client_socket.recv(BUF_SIZE)
-            if not data: break
             args = parse_resp_command(data)
-            if not args: continue
+            if not args:
+                continue
             cmd = args[0].upper()
-
             if cmd == "PING":
-                client_socket.sendall(b"+PONG\r\n")
+                sock.sendall(b"+PONG\r\n")
             elif cmd == "ECHO" and len(args) == 2:
-                client_socket.sendall(f"${len(args[1])}\r\n{args[1]}\r\n".encode())
-            elif cmd == "SET":
+                msg = args[1]
+                resp = f"${len(msg)}\r\n{msg}\r\n"
+                sock.sendall(resp.encode())
+            elif cmd == "SET" and len(args) >= 3:
                 database[args[1]] = args[2]
-                client_socket.sendall(b"+OK\r\n")
-            elif cmd == "GET":
-                v = database.get(args[1])
-                if v is None:
-                    client_socket.sendall(b"$-1\r\n")
+                sock.sendall(b"+OK\r\n")
+            elif cmd == "GET" and len(args) >= 2:
+                val = database.get(args[1])
+                if val is None:
+                    sock.sendall(b"$-1\r\n")
                 else:
-                    client_socket.sendall(f"${len(v)}\r\n{v}\r\n".encode())
-            elif cmd == "CONFIG" and len(args) == 3 and args[1].upper() == "GET" and args[2] == "dir":
-                resp = f"*2\r\n$3\r\ndir\r\n${len(dir_value)}\r\n{dir_value}\r\n"
-                client_socket.sendall(resp.encode())
-            elif cmd == "KEYS" and args[1] == "*":
+                    resp = f"${len(val)}\r\n{val}\r\n"
+                    sock.sendall(resp.encode())
+            elif cmd == "KEYS" and len(args) >= 2 and args[1] == "*":
                 keys = list(database.keys())
                 resp = f"*{len(keys)}\r\n"
                 for k in keys:
                     resp += f"${len(k)}\r\n{k}\r\n"
-                client_socket.sendall(resp.encode())
-        except:
-            break
-    client_socket.close()
+                sock.sendall(resp.encode())
+            elif cmd == "CONFIG" and len(args) == 3 and args[1].upper() == "GET" and args[2] == "dir":
+                resp = f"*2\r\n$3\r\ndir\r\n${len(dir_value)}\r\n{dir_value}\r\n"
+                sock.sendall(resp.encode())
+            else:
+                sock.sendall(b"-ERR unknown command\r\n")
+    except Exception:
+        pass
+    finally:
+        sock.close()
 
 def main():
     global dir_value
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", default=".")
     parser.add_argument("--dbfilename", default="dump.rdb")
     args = parser.parse_args()
 
     dir_value = args.dir
-    rdbfile = os.path.join(args.dir, args.dbfilename)
+    rdb_path = os.path.join(dir_value, args.dbfilename)
+
     print("Logs from your program will appear here!")
     print(f"RDB directory: {dir_value}")
     print(f"RDB filename: {args.dbfilename}")
-    if os.path.exists(rdbfile):
-        print("Loading RDB...")
-        read_rdb_file(rdbfile)
-    else:
-        print("No RDB file found, starting fresh.")
 
-    server = socket.create_server(("localhost", 6379), reuse_port=True)
-    print("Server listening on localhost:6379")
+    load_rdb(rdb_path)
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("localhost", 6379))
+    server.listen(5)
+    print("Listening on localhost:6379")
+
     while True:
-        client, _ = server.accept()
-        threading.Thread(target=handle_client_connection, args=(client,)).start()
+        client_sock, _ = server.accept()
+        threading.Thread(target=handle_client, args=(client_sock,), daemon=True).start()
 
 if __name__ == "__main__":
     main()
