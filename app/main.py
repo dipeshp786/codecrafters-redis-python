@@ -44,7 +44,6 @@ def handle_client_connection(client_socket):
                 value = args[2]
                 database[key] = value
 
-                # Check for PX (expiry in milliseconds)
                 if len(args) >= 5 and args[3].upper() == "PX":
                     try:
                         expiry_ms = int(args[4])
@@ -59,7 +58,6 @@ def handle_client_connection(client_socket):
             elif command == "GET":
                 key = args[1]
                 if key in expiry_times and time.time() > expiry_times[key]:
-                    # Expired key: remove it
                     database.pop(key, None)
                     expiry_times.pop(key, None)
                     client_socket.sendall(b"$-1\r\n")
@@ -78,7 +76,6 @@ def handle_client_connection(client_socket):
 
 def main():
     print("Logs from your program will appear here!")
-
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
 
     while True:
@@ -88,32 +85,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-  client_socket.sendall("$-1\r\n".encode())
-                    else:
-                        client_socket.sendall(f"+{value['v']}\r\n".encode())
-            case ["config", "get", key]:
-                value = get_from_vault(key)["v"]
-                client_socket.sendall(
-                    f"*2\r\n${len(key)}\r\n{key}\r\n${len(value)}\r\n{value}\r\n".encode()
-                )
-
-    client_socket.close()
-
-
-def main():
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    try:
-        while True:
-            client_socket, _ = server_socket.accept()  # wait for client
-            print(client_socket, "CONN")
-            client_thread = threading.Thread(
-                target=handle_client, args=(client_socket,), daemon=True
-            )
-            client_thread.start()
-    except KeyboardInterrupt:
-        client_socket.close()
-
-
-    
