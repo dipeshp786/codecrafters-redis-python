@@ -1,62 +1,45 @@
-#!/usr/bin/env python3
 import socket
 import sys
-import os
-import argparse
 import threading
 
-data_store = {}
-global_dir = ""
-
-def load_rdb(rdb_path):
-    # Mock RDB loading — just add keys from a dummy list for testing
-    # In real code, parse RDB binary file properly
-    if not os.path.exists(rdb_path):
-        print(f"[your_program] RDB file not found: {rdb_path}")
-        return
-    # Example keys hardcoded for demo (replace with actual parsing)
-    # For demonstration, pretend we load these keys:
-    keys = ["apple", "strawberry", "orange", "pear", "raspberry"]
-    for k in keys:
-        data_store[k] = "value_for_" + k
-    print(f"[your_program] Loaded keys from RDB: {list(data_store.keys())}")
+data_store = {}  # key-value store, keys loaded from RDB file
 
 def parse_resp(data):
-    # Very minimal RESP parser for commands
-    # Assumes full command arrives at once (for demo only)
-    lines = data.split(b'\r\n')
-    if not lines:
-        return None, None
+    """
+    Very simple RESP parser for array commands like:
+    *2\r\n$4\r\nKEYS\r\n$1\r\n*\r\n
+    Returns (cmd, args) where args includes cmd itself as first element.
+    """
     try:
-        if lines[0].startswith(b'*'):
-            n = int(lines[0][1:])
-            args = []
-            i = 1
-            while len(args) < n:
-                length = int(lines[i][1:])
-                arg = lines[i+1]
-                args.append(arg.decode())
-                i += 2
-            cmd = args[0].upper()
-            return cmd, args
-        else:
+        lines = data.decode().split('\r\n')
+        if not lines or lines[0][0] != '*':
             return None, None
+        num_elems = int(lines[0][1:])
+        args = []
+        idx = 1
+        for _ in range(num_elems):
+            # skip bulk string length line ($<num>)
+            bulk_len_line = lines[idx]
+            if not bulk_len_line.startswith('$'):
+                return None, None
+            bulk_len = int(bulk_len_line[1:])
+            idx += 1
+            args.append(lines[idx])
+            idx += 1
+        cmd = args[0].upper()
+        return cmd, args
     except Exception:
         return None, None
 
-def send_resp_array(client, items):
-    resp = f"*{len(items)}\r\n"
-    for item in items:
+def send_resp_array(sock, array):
+    resp = f"*{len(array)}\r\n"
+    for item in array:
         resp += f"${len(item)}\r\n{item}\r\n"
-    client.sendall(resp.encode())
+    sock.sendall(resp.encode())
 
-def send_resp_error(client, message):
-    resp = f"-ERR {message}\r\n"
-    client.sendall(resp.encode())
-
-def send_resp_simple_string(client, message):
-    resp = f"+{message}\r\n"
-    client.sendall(resp.encode())
+def send_resp_error(sock, msg):
+    resp = f"-ERR {msg}\r\n"
+    sock.sendall(resp.encode())
 
 def handle_client(client_socket, addr):
     try:
@@ -70,66 +53,53 @@ def handle_client(client_socket, addr):
             client_socket.close()
             return
 
-        # Handle KEYS *
+        # Handle KEYS command with 0 or 1 arg
         if cmd == "KEYS":
-            if len(args) != 2:
-                send_resp_error(client_socket, f"Expected command to have 1 argument, got {len(args)-1}")
-            elif args[1] == "*":
+            num_args = len(args) - 1  # exclude command itself
+            if num_args == 0:
+                keys = list(data_store.keys())
+                send_resp_array(client_socket, keys)
+            elif num_args == 1 and args[1] == "*":
                 keys = list(data_store.keys())
                 send_resp_array(client_socket, keys)
             else:
-                send_resp_array(client_socket, [])
+                send_resp_error(client_socket, f"Expected command to have 0 arguments, got {num_args}")
             client_socket.close()
             return
 
-        # Handle CONFIG GET dir
-        if cmd == "CONFIG":
-            if len(args) == 3 and args[1].upper() == "GET" and args[2] == "dir":
-                send_resp_array(client_socket, ["dir", global_dir])
-            else:
-                send_resp_array(client_socket, [])
-            client_socket.close()
-            return
-
-        # For other commands, respond error
-        send_resp_error(client_socket, "Unsupported command")
+        # For other commands, just error for now
+        send_resp_error(client_socket, f"Unknown command '{cmd}'")
+        client_socket.close()
     except Exception as e:
         print(f"[your_program] Exception: {e}")
-    finally:
         client_socket.close()
 
-def run_server():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(("localhost", 6379))
-    server_socket.listen(5)
+def load_rdb_mock():
+    # Mock loading keys from RDB file for demo purposes
+    # Replace with your actual RDB loading code
+    global data_store
+    data_store = {
+        "apple": "fruit",
+        "orange": "fruit",
+        "strawberry": "fruit"
+    }
+    print(f"[your_program] Loaded keys from RDB: {list(data_store.keys())}")
+
+def main():
+    load_rdb_mock()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(('localhost', 6379))
+    server.listen(5)
     print("[your_program] Listening on localhost:6379")
 
     try:
         while True:
-            client_socket, addr = server_socket.accept()
-            threading.Thread(target=handle_client, args=(client_socket, addr), daemon=True).start()
+            client_sock, addr = server.accept()
+            threading.Thread(target=handle_client, args=(client_sock, addr)).start()
     except KeyboardInterrupt:
         print("[your_program] Shutdown signal received, closing server...")
     finally:
-        server_socket.close()
-
-def main():
-    global global_dir
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", required=True, help="RDB directory")
-    parser.add_argument("--dbfilename", required=True, help="RDB filename")
-    args = parser.parse_args()
-
-    global_dir = args.dir
-
-    rdb_path = os.path.join(args.dir, args.dbfilename)
-
-    print(f"[your_program] RDB directory: {args.dir}")
-    print(f"[your_program] RDB filename: {args.dbfilename}")
-    print(f"[your_program] Full path: {rdb_path}")
-
-    load_rdb(rdb_path)
-    run_server()
+        server.close()
 
 if __name__ == "__main__":
     main()
