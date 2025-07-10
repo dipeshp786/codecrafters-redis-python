@@ -1,3 +1,26 @@
+import socket
+import threading
+import time
+import argparse
+
+BUF_SIZE = 4096
+database = {}
+expiry_times = {}
+dir_value = "."  # Will be overwritten from CLI argument if provided
+
+def parse_resp_command(data: bytes) -> list[str]:
+    lines = data.decode().split("\r\n")
+    if not lines or not lines[0].startswith("*"):
+        return []
+    args = []
+    i = 2
+    while i < len(lines):
+        if lines[i] == "":
+            break
+        args.append(lines[i])
+        i += 2
+    return args
+
 def handle_client_connection(client_socket):
     while True:
         try:
@@ -48,7 +71,6 @@ def handle_client_connection(client_socket):
                     client_socket.sendall(b"$-1\r\n")
 
             elif command == "CONFIG" and len(args) == 3 and args[1].upper() == "GET" and args[2] == "dir":
-                dir_value = "."  # Later you can replace this with a value passed from --dir
                 response = f"*2\r\n$3\r\ndir\r\n${len(dir_value)}\r\n{dir_value}\r\n"
                 client_socket.sendall(response.encode())
 
@@ -57,3 +79,27 @@ def handle_client_connection(client_socket):
             break
 
     client_socket.close()
+
+def main():
+    global dir_value
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dir", type=str, default=".")
+    parser.add_argument("--dbfilename", type=str, default="dump.rdb")
+    args = parser.parse_args()
+
+    dir_value = args.dir
+
+    print("Logs from your program will appear here!")
+    print(f"RDB directory: {args.dir}")
+    print(f"RDB filename: {args.dbfilename}")
+
+    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+
+    while True:
+        client_socket, _ = server_socket.accept()
+        thread = threading.Thread(target=handle_client_connection, args=(client_socket,))
+        thread.start()
+
+if __name__ == "__main__":
+    main()
