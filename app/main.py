@@ -95,7 +95,8 @@ def main():
     print(f"[your_program] Loaded keys from RDB: {list(data_store.keys())}")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('localhost', 6379))
+    server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    server.bind(('::', 6379))
     server.listen(5)
     print("[your_program] Listening on localhost:6379")
 
