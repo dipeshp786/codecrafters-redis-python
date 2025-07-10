@@ -1,15 +1,22 @@
 import socket
 import sys
 import threading
+import argparse
+import os
 
-data_store = {}  # key-value store, keys loaded from RDB file
+data_store = {}
+
+def load_keys_from_file(filepath):
+    # Minimal example: assume file contains keys, one per line
+    # Replace with actual RDB parsing if needed
+    if not os.path.isfile(filepath):
+        print(f"[your_program] RDB file not found: {filepath}")
+        return []
+    with open(filepath, 'r') as f:
+        keys = [line.strip() for line in f.readlines() if line.strip()]
+    return keys
 
 def parse_resp(data):
-    """
-    Very simple RESP parser for array commands like:
-    *2\r\n$4\r\nKEYS\r\n$1\r\n*\r\n
-    Returns (cmd, args) where args includes cmd itself as first element.
-    """
     try:
         lines = data.decode().split('\r\n')
         if not lines or lines[0][0] != '*':
@@ -18,11 +25,9 @@ def parse_resp(data):
         args = []
         idx = 1
         for _ in range(num_elems):
-            # skip bulk string length line ($<num>)
             bulk_len_line = lines[idx]
             if not bulk_len_line.startswith('$'):
                 return None, None
-            bulk_len = int(bulk_len_line[1:])
             idx += 1
             args.append(lines[idx])
             idx += 1
@@ -53,9 +58,8 @@ def handle_client(client_socket, addr):
             client_socket.close()
             return
 
-        # Handle KEYS command with 0 or 1 arg
         if cmd == "KEYS":
-            num_args = len(args) - 1  # exclude command itself
+            num_args = len(args) - 1
             if num_args == 0:
                 keys = list(data_store.keys())
                 send_resp_array(client_socket, keys)
@@ -67,26 +71,29 @@ def handle_client(client_socket, addr):
             client_socket.close()
             return
 
-        # For other commands, just error for now
         send_resp_error(client_socket, f"Unknown command '{cmd}'")
         client_socket.close()
     except Exception as e:
         print(f"[your_program] Exception: {e}")
         client_socket.close()
 
-def load_rdb_mock():
-    # Mock loading keys from RDB file for demo purposes
-    # Replace with your actual RDB loading code
-    global data_store
-    data_store = {
-        "apple": "fruit",
-        "orange": "fruit",
-        "strawberry": "fruit"
-    }
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dir", required=True, help="RDB directory")
+    parser.add_argument("--dbfilename", required=True, help="RDB filename")
+    args = parser.parse_args()
+
+    rdb_path = os.path.join(args.dir, args.dbfilename)
+    keys = load_keys_from_file(rdb_path)
+    if keys:
+        global data_store
+        data_store = {key: "value" for key in keys}  # dummy values
+
+    print(f"[your_program] RDB directory: {args.dir}")
+    print(f"[your_program] RDB filename: {args.dbfilename}")
+    print(f"[your_program] Full path: {rdb_path}")
     print(f"[your_program] Loaded keys from RDB: {list(data_store.keys())}")
 
-def main():
-    load_rdb_mock()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(('localhost', 6379))
     server.listen(5)
