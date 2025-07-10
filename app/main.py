@@ -28,36 +28,35 @@ def load_rdb(filepath):
 
     print(f"[your_program] Loaded keys from RDB: {list(database.keys())}")
 
-def parse_redis_command(data_bytes):
+def parse_redis_command(data):
     """
-    Parse a simple Redis RESP array command like:
-    *2\r\n$4\r\nKEYS\r\n$1\r\n*\r\n
-    Returns list of strings, e.g. ['KEYS', '*']
+    Minimal RESP parser to handle simple arrays of bulk strings.
+    Returns list of decoded strings or None if parsing fails.
     """
     try:
-        data_str = data_bytes.decode('utf-8')
-        lines = data_str.split('\r\n')
-        if not lines or not lines[0].startswith('*'):
-            return []
-
-        num_elements = int(lines[0][1:])
+        text = data.decode('utf-8', errors='ignore').strip()
+        if not text.startswith('*'):
+            # Treat as simple inline command
+            return text.split()
+        lines = text.split('\r\n')
+        if not lines[0].startswith('*'):
+            return None
+        argc = int(lines[0][1:])
         args = []
-        idx = 1
-        for _ in range(num_elements):
-            if idx >= len(lines):
-                break
-            if lines[idx].startswith('$'):
-                length = int(lines[idx][1:])
-                idx += 1
-                if idx >= len(lines):
-                    break
-                args.append(lines[idx])
-                idx += 1
+        i = 1
+        while len(args) < argc and i < len(lines):
+            if lines[i].startswith('$'):
+                length = int(lines[i][1:])
+                arg = lines[i+1]
+                args.append(arg)
+                i += 2
             else:
-                break
-        return args
+                i += 1
+        if len(args) == argc:
+            return args
+        return None
     except Exception:
-        return []
+        return None
 
 def handle_client(client_socket):
     try:
@@ -67,7 +66,7 @@ def handle_client(client_socket):
             return
 
         args = parse_redis_command(data)
-        if not args:
+        if not args or len(args) == 0:
             client_socket.sendall(b"-Error parsing command\r\n")
             client_socket.close()
             return
@@ -75,19 +74,16 @@ def handle_client(client_socket):
         cmd = args[0].upper()
 
         if cmd == "KEYS":
-            # Support only simple '*' wildcard to return all keys
-            pattern = args[1] if len(args) > 1 else "*"
-            if pattern == "*":
+            # Accept KEYS with 0 arguments OR 1 argument which is "*"
+            if len(args) == 1 or (len(args) == 2 and args[1] == "*"):
                 keys = list(database.keys())
                 response = f"*{len(keys)}\r\n"
                 for k in keys:
                     response += f"${len(k)}\r\n{k}\r\n"
                 client_socket.sendall(response.encode('utf-8'))
             else:
-                # Unsupported pattern — respond empty array
-                client_socket.sendall(b"*0\r\n")
+                client_socket.sendall(b"-ERR wrong number of arguments for 'keys' command\r\n")
         else:
-            # Unsupported command — empty array
             client_socket.sendall(b"*0\r\n")
     except Exception as e:
         print(f"[your_program] Error handling client: {e}")
