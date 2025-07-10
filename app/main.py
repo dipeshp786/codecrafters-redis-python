@@ -88,3 +88,32 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+  client_socket.sendall("$-1\r\n".encode())
+                    else:
+                        client_socket.sendall(f"+{value['v']}\r\n".encode())
+            case ["config", "get", key]:
+                value = get_from_vault(key)["v"]
+                client_socket.sendall(
+                    f"*2\r\n${len(key)}\r\n{key}\r\n${len(value)}\r\n{value}\r\n".encode()
+                )
+
+    client_socket.close()
+
+
+def main():
+    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    try:
+        while True:
+            client_socket, _ = server_socket.accept()  # wait for client
+            print(client_socket, "CONN")
+            client_thread = threading.Thread(
+                target=handle_client, args=(client_socket,), daemon=True
+            )
+            client_thread.start()
+    except KeyboardInterrupt:
+        client_socket.close()
+
+
+    
