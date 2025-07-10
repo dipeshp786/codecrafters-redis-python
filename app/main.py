@@ -74,15 +74,20 @@ def handle_client(client_socket):
         cmd = args[0].upper()
 
         if cmd == "KEYS":
-            # ONLY accept KEYS command with NO arguments (i.e., len(args) == 1)
+            # Accept only zero arguments or one argument equal to "*"
             if len(args) == 1:
                 keys = list(database.keys())
                 response = f"*{len(keys)}\r\n"
                 for k in keys:
                     response += f"${len(k)}\r\n{k}\r\n"
                 client_socket.sendall(response.encode('utf-8'))
+            elif len(args) == 2 and args[1] == "*":
+                keys = list(database.keys())
+                response = f"*{len(keys)}\r\n"
+                for k in keys:
+                    response += f"${len(k)}\r\n{k}\r\n"
+                client_socket.sendall(response.encode('utf-8'))
             else:
-                # Any argument other than zero should error out
                 client_socket.sendall(b"-ERR wrong number of arguments for 'keys' command\r\n")
         else:
             client_socket.sendall(b"*0\r\n")
