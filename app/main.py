@@ -103,3 +103,44 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    import argparse
+import asyncio
+import time
+import utils.parser as resp
+
+
+async def serveRedis():
+    config = getConfig()
+    server = await asyncio.start_server(
+        lambda r, w: handleClient(config, r, w), config["host"], config["port"]
+    )
+    print(f"Starting server on {config['host']}:{config['port']}")
+    async with server:
+        await server.serve_forever()
+
+
+def getConfig():
+    flag = argparse.ArgumentParser()
+    flag.add_argument("--dir", default=".", help="Directory for redis files")
+    flag.add_argument("--dbfilename", default="dump.rdb", help="Database filename")
+    flag.add_argument("--port", default="6379", help="Port to listen on")
+    flag.add_argument("--replicaof", help="Replication target (format: HOST PORT)")
+    args = flag.parse_args()
+    config = {
+        "store": {},
+        "port": args.port,
+        "host": "0.0.0.0",
+        "role": "master",
+        "dbfilename": args.dbfilename,
+        "dir": args.dir,
+        "master_replid": "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+        "master_repl_offset": "0",
+        "replicaof": args.replicaof,
+        "master_host": None,
+        "master_port": None,
+    }
+    resp.read_key_val_from_db(config["dir"], config["dbfilename"], config["store"])
+    if args.replicaof:
+        config["role"] = "slave"
+        config["master_host"], config["master_port"] = args.replicaof
